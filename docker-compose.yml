@@ -1,0 +1,83 @@
+services:
+  tailscale:
+    image: ghcr.io/mrchops1024/tailscale-sidecar:dev
+    container_name: ts-${TS_HOSTNAME}
+    restart: unless-stopped
+    hostname: ${TS_HOSTNAME}
+    ports:
+      - "3443:443"
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_USERSPACE: false
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_DOMAIN_NAME: ${TS_DOMAIN_NAME}
+      TS_HOSTNAME: ${TS_HOSTNAME}
+      TS_ACCEPT_DNS: true
+      TS_AUTH_ONCE: true
+    volumes:
+      - ts-state:/var/lib/tailscale
+      - ts-certs:/certs
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+      - sys_module
+    networks:
+      - ts-net
+
+  traefik:
+    image: ghcr.io/traefik/traefik:v3
+    container_name: traefik
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${BIND_PATH:-.}/tls-config.yml:/etc/traefik/tls-config.yml:ro
+      - ts-certs:/certs:ro
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    command:
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --providers.docker=true
+      - --providers.docker.endpoint=unix:///var/run/docker.sock
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=ts-net
+      - --providers.file.filename=/etc/traefik/tls-config.yml
+      - --providers.file.watch=true
+
+  hydra-server:
+    image: ghcr.io/mrchops1024/hydra-server:dev
+    container_name: hydra-server
+    restart: unless-stopped
+    depends_on:
+      - tailscale
+      - traefik
+    labels:
+      traefik.enable: true
+      # HTTPS Router
+      traefik.http.routers.hydra.rule: Host(`${TS_DOMAIN_NAME}`)
+      traefik.http.routers.hydra.entrypoints: websecure
+      traefik.http.routers.hydra.tls: true
+      traefik.http.routers.hydra.service: hydra-service
+      # Service definition - forward to port 3000
+      traefik.http.services.hydra-service.loadbalancer.server.port: 3000
+    volumes:
+      - ${BIND_PATH:-.}/data:/data
+    environment:
+      NODE_ENV: production
+      IS_CUSTOM_SERVER: true
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
+    networks:
+      - ts-net
+
+volumes:
+  ts-state:
+  ts-certs:
+
+networks:
+  ts-net:
+    name: ${TS_HOSTNAME}-net
+    driver: bridge

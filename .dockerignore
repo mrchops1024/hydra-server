@@ -36,3 +36,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 sqlite.db
 sqlite.db-shm
 sqlite.db-wal
+
+# development and deployment files
+docker-compose.yml
+*.tar
+*.md
+.git/
+.gitattributes
